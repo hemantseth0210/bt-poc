@@ -1,0 +1,12 @@
+runtime: java11
+env: standard
+runtime_config:
+  jdk: openjdk11
+env_variables:
+  BIGTABLE_PROJECT_ID: "mtech-pfl-poc"
+  BIGTABLE_INSTANCE_ID: "pfl-poc-bt"
+handlers:
+  - url: /.*
+    script: this field is required, but ignored
+manual_scaling:
+  instances: 1
