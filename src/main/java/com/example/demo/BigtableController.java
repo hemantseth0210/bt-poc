@@ -15,6 +15,11 @@ public class BigtableController {
 
     @Autowired
     private BigTableUtil bigTableUtil;
+	
+	@GetMapping("/hello")
+    public String hello(){
+        return "hello !!!!";
+    }
 
     @GetMapping("/getRowsByRowKeyByPrefix")
     public Map<String, Row> getRowsByRowKeyByPrefix(@RequestBody List<String> rowKeys) throws IOException {
