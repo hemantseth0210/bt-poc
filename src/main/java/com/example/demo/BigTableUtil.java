@@ -10,6 +10,7 @@ import com.google.cloud.bigtable.data.v2.models.RowCell;
 import com.google.protobuf.ByteString;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
+import net.spy.memcached.MemcachedClient;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.RedisTemplate;
@@ -17,6 +18,7 @@ import org.springframework.stereotype.Component;
 
 import javax.annotation.PreDestroy;
 import java.io.IOException;
+import java.net.InetSocketAddress;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
@@ -40,19 +42,21 @@ public class BigTableUtil {
 
     private static Integer count = 0;
 
-    //private MemcachedClient mcc = null;
+    private MemcachedClient mcc = null;
 
     @Autowired
     RedisTemplate<String, String> redisTemplate;
 
-    private String discoveryEndpoint = "localhost";
+    private String discoveryEndpoint;
 
     public BigTableUtil(@Value("${bigtable.project.id:}") String projectId,
                         @Value("${bigtable.instance.id:}") String instanceId,
-                        @Value("${bigtable.tableId:}") String tableId) throws IOException {
+                        @Value("${bigtable.tableId:}") String tableId,
+                        @Value("${memcached.host:}") String discoveryEndpoint) throws IOException {
         this.projectId = projectId;
         this.instanceId = instanceId;
         this.tableId = tableId;
+        this.discoveryEndpoint = discoveryEndpoint;
         //Skip establishing bigtable connection if either of these properties blank
         if(!projectId.isBlank() && !instanceId.isBlank() && !tableId.isBlank()) {
             connect();
@@ -68,7 +72,7 @@ public class BigTableUtil {
             log.info("Trying to connect to " + projectId + ":" + instanceId + ":" + tableId + " bigtable");
             try {
                 client = BigtableDataClient.create(projectId, instanceId);
-               // mcc = new MemcachedClient(new InetSocketAddress(discoveryEndpoint, 11211));
+                mcc = new MemcachedClient(new InetSocketAddress(discoveryEndpoint, 11211));
             } catch (IOException e) {
                 log.error("Connect failed!");
                 throw e;
@@ -233,6 +237,84 @@ public class BigTableUtil {
         return map;
     }
 
+    // With Memcached
+    public Map<String, Map<String, String>> getRowsByRowKeyByPrefixWithMemcached(String rowKeyPrefix, Set<String> rowKeys,
+                                                                     Map<String, String> qualifierFamilyMap) {
+        Map<String, Map<String, String>> map = new HashMap<>();
+        try {
+            Map<String, Object> cacheMap = mcc.getBulk(rowKeys);
+            if(cacheMap != null && cacheMap.size() > 0){
+                long queryTime = System.currentTimeMillis();
+                for(String rowKey : rowKeys) {
+                    if(cacheMap.containsKey(rowKey)) {
+                        String cacheMapValue = (String) cacheMap.get(rowKey);
+                        String[] qualifierFamilyArr = cacheMapValue.split("#");
+                        if(qualifierFamilyArr != null && qualifierFamilyArr.length > 0){
+                            Map<String, String> cacheQualifierFamilyMap = new HashMap<>();
+                            for(String arrValue : qualifierFamilyArr){
+                                String[] qualifierFamilyValue = arrValue.split(":");
+                                if(qualifierFamilyValue != null && qualifierFamilyValue.length ==2){
+                                    cacheQualifierFamilyMap.put(qualifierFamilyValue[0], qualifierFamilyValue[1]);
+                                }
+                            }
+                            map.put(rowKey, cacheQualifierFamilyMap);
+                        }
+                    }
+                }
+                log.info("getRowsByRowKeyByPrefixWithMemcached--Cache--Time taken for looping the result set " +
+                                "of Rows to final map: {} msc , total count {} , rowKeys Size {}, final count {} "
+                        , System.currentTimeMillis() - queryTime, cacheMap.size() ,rowKeys.size(), map.size());
+            } else {
+                Query query = Query.create(tableId).prefix(rowKeyPrefix + "#");
+                long queryTime = System.currentTimeMillis();
+                if (qualifierFamilyMap != null && qualifierFamilyMap.size() > 0) {
+                    String familyRegex = String.join("|", new HashSet<>(qualifierFamilyMap.values()));
+                    Filters.Filter filter  = FILTERS.family().regex(familyRegex);
+                    query.filter(filter);
+                }
+                ServerStream<Row> rows = connect().readRows(query);
+                queryTime = System.currentTimeMillis();
+                int count = 0;
+                StringBuilder sb = null;
+                for(Row row : rows) {
+                    count++;
+                    if(rowKeys.contains(row.getKey().toStringUtf8())) {
+                        Map<String, String> qualifierMap = new HashMap<>();
+                        for (Map.Entry<String, String> entry : qualifierFamilyMap.entrySet()) {
+                            List<RowCell> rowCells = row.getCells(entry.getValue(), entry.getKey());
+                            if(rowCells != null && rowCells.size()>0){
+                                qualifierMap.put(entry.getKey(), rowCells.get(0) != null ? rowCells.get(0).getValue().toStringUtf8() : null);
+                            }
+                        }
+                        map.put(row.getKey().toStringUtf8(), qualifierMap);
+                    }
+                    sb = new StringBuilder();
+                    int i = 0;
+                    for (Map.Entry<String, String> entry : qualifierFamilyMap.entrySet()) {
+                        List<RowCell> rowCells = row.getCells(entry.getValue(), entry.getKey());
+                        if(rowCells != null && rowCells.size()>0){
+                            if(i == 0){
+                                sb.append(entry.getKey()).append(":").append(rowCells.get(0) != null ? rowCells.get(0).getValue().toStringUtf8() : null);
+                            } else {
+                                sb.append("#").append(entry.getKey()).append(":").append(rowCells.get(0) != null ? rowCells.get(0).getValue().toStringUtf8() : null);
+                            }
+                            i++;
+                        }
+                    }
+                    mcc.set(row.getKey().toStringUtf8(), 120 * 60, sb.toString());
+                }
+                log.info("getRowsByRowKeyByPrefixWithMemcached--bigtable--Time taken for looping the result set of Rows to final " +
+                                "final map: {} msc , total count {} , rowKeys Size {}, final count {} "
+                        , System.currentTimeMillis() - queryTime, count ,rowKeys.size(), map.size());
+            }
+
+        } catch (IOException e) {
+            //Create a dummy Row for the row key that throws an exception
+            log.debug(String.valueOf(e));
+        }
+        return map;
+    }
+
 
     public Map<String, Row> getRowsByRowKeyByRange(List<String> rowKeys, String... families) {
         Map<String, Row> map = new HashMap<>();
@@ -357,7 +439,24 @@ public class BigTableUtil {
         rowKeys.keySet().parallelStream()
                 .map(upc -> getRowsByRowKeyByPrefixWithRedisCache(upc, rowKeys.get(upc), qualifierFamilyMap))
                 .collect(Collectors.toList()).forEach(rowMap::putAll);
-        log.info("processNcpEligibleUpcsByPrefixPost----Time taken for looping the result set of Rows to final map: {} msc , rowkeys {} , " +
+        log.info("processNcpEligibleUpcsByPrefixPostWithRedisCache----Time taken for looping the result set of Rows to final map: {} msc , rowkeys {} , " +
+                "final count {} " , System.currentTimeMillis() - queryTime, rowKeys.size()*getLocationNumbers().size(), rowMap.size());
+        return rowMap;
+    }
+
+    public Map<String, Map<String, String>> processNcpEligibleUpcsByPrefixPostWithMemcached(List<String> upcs, String... families) {
+        Map<String, Set<String>> rowKeys = prepareUpcsAndLocs(upcs);
+        Map<String, Map<String, String>> rowMap = new HashMap<>();
+        Map<String, String> qualifierFamilyMap = new HashMap<>();
+        qualifierFamilyMap.put("congruency_f", "cfcg");
+        qualifierFamilyMap.put("ats_thld", "cfinvc");
+        qualifierFamilyMap.put("inv_diff", "cfinvc");
+        qualifierFamilyMap.put("inv_overrd", "cfinvc");
+        long queryTime = System.currentTimeMillis();
+        rowKeys.keySet().parallelStream()
+                .map(upc -> getRowsByRowKeyByPrefixWithMemcached(upc, rowKeys.get(upc), qualifierFamilyMap))
+                .collect(Collectors.toList()).forEach(rowMap::putAll);
+        log.info("processNcpEligibleUpcsByPrefixPostWithMemcached----Time taken for looping the result set of Rows to final map: {} msc , rowkeys {} , " +
                 "final count {} " , System.currentTimeMillis() - queryTime, rowKeys.size()*getLocationNumbers().size(), rowMap.size());
         return rowMap;
     }

@@ -15,11 +15,6 @@ public class BigtableController {
 
     @Autowired
     private BigTableUtil bigTableUtil;
-	
-	@GetMapping("/hello")
-    public String hello(){
-        return "hello !!!!";
-    }
 
     @GetMapping("/getRowsByRowKeyByPrefix")
     public Map<String, Row> getRowsByRowKeyByPrefix(@RequestBody List<String> rowKeys) throws IOException {
@@ -54,5 +49,10 @@ public class BigtableController {
     @PostMapping("/processNcpEligibleUpcsByPrefixPostWithRedisCache")
     public Map<String, String> processNcpEligibleUpcsByPrefixPostWithRedisCache(@RequestBody List<String> upcs) throws IOException {
         return bigTableUtil.processNcpEligibleUpcsByPrefixPostWithRedisCache(upcs, "cfinvc", "cfcg");
+    }
+
+    @PostMapping("/processNcpEligibleUpcsByPrefixPostWithMemcached")
+    public Map<String, Map<String, String>> processNcpEligibleUpcsByPrefixPostWithMemcached(@RequestBody List<String> upcs) throws IOException {
+        return bigTableUtil.processNcpEligibleUpcsByPrefixPostWithMemcached(upcs, "cfinvc", "cfcg");
     }
 }
