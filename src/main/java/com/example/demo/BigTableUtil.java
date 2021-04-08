@@ -18,6 +18,7 @@ import lombok.extern.slf4j.Slf4j;
 import net.spy.memcached.MemcachedClient;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
@@ -25,6 +26,7 @@ import org.springframework.stereotype.Component;
 import javax.annotation.PreDestroy;
 import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.time.Duration;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
@@ -81,7 +83,7 @@ public class BigTableUtil {
             log.info("Trying to connect to " + projectId + ":" + instanceId + ":" + tableId + " bigtable");
             try {
                 client = BigtableDataClient.create(projectId, instanceId);
-                mcc = new MemcachedClient(new InetSocketAddress(discoveryEndpoint, 11211));
+                //mcc = new MemcachedClient(new InetSocketAddress(discoveryEndpoint, 11211));
                 RedisURI redisURI = RedisURI.create("172.21.108.67",6379);
                 RedisClient redisClient = RedisClient.create(redisURI);
                 StatefulRedisConnection<String, String> connection = redisClient.connect();
@@ -214,8 +216,8 @@ public class BigTableUtil {
                     Filters.Filter filter  = FILTERS.family().regex(familyRegex);
                     query.filter(filter);
                 }
-                ServerStream<Row> rows = connect().readRows(query);
                 queryTime = System.currentTimeMillis();
+                ServerStream<Row> rows = connect().readRows(query);
                 int count = 0;
                 Map<String, String> bigtableRowsMap = new HashMap<>();
                 for(Row row : rows) {
@@ -224,22 +226,30 @@ public class BigTableUtil {
                         for (Map.Entry<String, String> entry : qualifierFamilyMap.entrySet()) {
                             List<RowCell> rowCells = row.getCells(entry.getValue(), entry.getKey());
                             if(rowCells != null && rowCells.size()>0){
-                                map.put(row.getKey().toStringUtf8() + "#" + entry.getKey(),
+                                map.put(String.format("%s#%s",row.getKey().toStringUtf8(),entry.getKey()),
                                         rowCells.get(0) != null ? rowCells.get(0).getValue().toStringUtf8() : null);
+                                bigtableRowsMap.put(String.format("%s#%s",row.getKey().toStringUtf8(),entry.getKey()),
+                                        rowCells.get(0) != null ? rowCells.get(0).getValue().toStringUtf8() : null);
+
                             }
                         }
+                        continue;
                     }
+
                     for (Map.Entry<String, String> entry : qualifierFamilyMap.entrySet()) {
                         List<RowCell> rowCells = row.getCells(entry.getValue(), entry.getKey());
                         if(rowCells != null && rowCells.size()>0){
-                            bigtableRowsMap.put(row.getKey().toStringUtf8() + "#" + entry.getKey(),
+                            bigtableRowsMap.put(String.format("%s#%s",row.getKey().toStringUtf8(),entry.getKey()),
                                     rowCells.get(0) != null ? rowCells.get(0).getValue().toStringUtf8() : null);
                         }
 
                     }
+
                 }
                 asyncCommands.hmset(hashKey, bigtableRowsMap);
-				asyncCommands.expire(hashKey, 10);
+                asyncCommands.expire(hashKey, 20);
+                //redisTemplate.opsForHash().putAll(hashKey, bigtableRowsMap);
+                //redisTemplate.expire(hashKey, 10, TimeUnit.SECONDS);
                // updateCache(hashKey, bigtableRowsMap);
                 log.info("getRowsByRowKeyByPrefixWithRedisCache----Time taken for looping the result set of Rows to final " +
                         "final map: {} msc , total count {} , rowKeys Size {}, final count {} "
