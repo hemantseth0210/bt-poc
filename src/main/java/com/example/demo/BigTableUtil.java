@@ -73,6 +73,7 @@ public class BigTableUtil {
             try {
                 client = BigtableDataClient.create(projectId, instanceId);
                 mcc = new MemcachedClient(new InetSocketAddress(discoveryEndpoint, 11211));
+		mcc.flush();
             } catch (IOException e) {
                 log.error("Connect failed!");
                 throw e;
@@ -178,6 +179,7 @@ public class BigTableUtil {
         try {
             String hashKey = rowKeyPrefix + "#";
             Map<Object, Object> cacheMap = redisTemplate.opsForHash().entries(hashKey);
+	   // Map<Object, Object> cacheMap = null; 
             if(cacheMap != null && cacheMap.size() > 0){
                 long queryTime = System.currentTimeMillis();
                 for(String rowKey : rowKeys) {
@@ -214,6 +216,7 @@ public class BigTableUtil {
                             }
                         }
                     }
+		    
                     for (Map.Entry<String, String> entry : qualifierFamilyMap.entrySet()) {
                         List<RowCell> rowCells = row.getCells(entry.getValue(), entry.getKey());
                         if(rowCells != null && rowCells.size()>0){
@@ -222,9 +225,10 @@ public class BigTableUtil {
                         }
 
                     }
+		   
                 }
                 redisTemplate.opsForHash().putAll(hashKey, bigtableRowsMap);
-                redisTemplate.expire(hashKey, 120, TimeUnit.MINUTES);
+                redisTemplate.expire(hashKey, 10, TimeUnit.SECONDS);
                 log.info("getRowsByRowKeyByPrefixWithRedisCache----Time taken for looping the result set of Rows to final " +
                         "final map: {} msc , total count {} , rowKeys Size {}, final count {} "
                         , System.currentTimeMillis() - queryTime, count ,rowKeys.size(), map.size());
@@ -262,8 +266,8 @@ public class BigTableUtil {
                     }
                 }
                 log.info("getRowsByRowKeyByPrefixWithMemcached--Cache--Time taken for looping the result set " +
-                                "of Rows to final map: {} msc , total count {} , rowKeys Size {}, final count {} "
-                        , System.currentTimeMillis() - queryTime, cacheMap.size() ,rowKeys.size(), map.size());
+                                "of RowKey : {}  to final map: {} msc , total count {} , rowKeys Size {}, final count {} "
+                        ,rowKeyPrefix, System.currentTimeMillis() - queryTime, cacheMap.size() ,rowKeys.size(), map.size());
             } else {
                 Query query = Query.create(tableId).prefix(rowKeyPrefix + "#");
                 long queryTime = System.currentTimeMillis();
@@ -303,9 +307,10 @@ public class BigTableUtil {
                     }
                     mcc.set(row.getKey().toStringUtf8(), 120 * 60, sb.toString());
                 }
-                log.info("getRowsByRowKeyByPrefixWithMemcached--bigtable--Time taken for looping the result set of Rows to final " +
+		//mcc.set(rowKeyPrefix, 120 * 60, String.valueOf(count));
+                log.info("getRowsByRowKeyByPrefixWithMemcached--bigtable--Time taken for looping the result set of RowKey : {} to final " +
                                 "final map: {} msc , total count {} , rowKeys Size {}, final count {} "
-                        , System.currentTimeMillis() - queryTime, count ,rowKeys.size(), map.size());
+                        ,rowKeyPrefix, System.currentTimeMillis() - queryTime, count ,rowKeys.size(), map.size());
             }
 
         } catch (IOException e) {
