@@ -8,6 +8,11 @@ import com.google.cloud.bigtable.data.v2.models.Query;
 import com.google.cloud.bigtable.data.v2.models.Row;
 import com.google.cloud.bigtable.data.v2.models.RowCell;
 import com.google.protobuf.ByteString;
+import io.lettuce.core.RedisClient;
+import io.lettuce.core.RedisURI;
+import io.lettuce.core.api.StatefulRedisConnection;
+import io.lettuce.core.api.async.RedisAsyncCommands;
+import io.lettuce.core.api.sync.RedisCommands;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
 import net.spy.memcached.MemcachedClient;
@@ -50,6 +55,9 @@ public class BigTableUtil {
 
     private String discoveryEndpoint;
 
+    private RedisCommands<String, String> syncCommands;
+    private RedisAsyncCommands<String, String> asyncCommands;
+
     public BigTableUtil(@Value("${bigtable.project.id:}") String projectId,
                         @Value("${bigtable.instance.id:}") String instanceId,
                         @Value("${bigtable.tableId:}") String tableId,
@@ -74,6 +82,11 @@ public class BigTableUtil {
             try {
                 client = BigtableDataClient.create(projectId, instanceId);
                 mcc = new MemcachedClient(new InetSocketAddress(discoveryEndpoint, 11211));
+                RedisURI redisURI = RedisURI.create("172.21.108.67",6379);
+                RedisClient redisClient = RedisClient.create(redisURI);
+                StatefulRedisConnection<String, String> connection = redisClient.connect();
+                syncCommands = connection.sync();
+                asyncCommands = connection.async();
             } catch (IOException e) {
                 log.error("Connect failed!");
                 throw e;
@@ -178,8 +191,8 @@ public class BigTableUtil {
         Map<String, String> map = new HashMap<>();
         try {
             String hashKey = rowKeyPrefix + "#";
-            Map<Object, Object> cacheMap = redisTemplate.opsForHash().entries(hashKey);
-	   // Map<Object, Object> cacheMap = null; 
+            //Map<Object, Object> cacheMap = redisTemplate.opsForHash().entries(hashKey);
+            Map<String, String> cacheMap = syncCommands.hgetall(hashKey);
             if(cacheMap != null && cacheMap.size() > 0){
                 long queryTime = System.currentTimeMillis();
                 for(String rowKey : rowKeys) {
@@ -216,7 +229,6 @@ public class BigTableUtil {
                             }
                         }
                     }
-		    
                     for (Map.Entry<String, String> entry : qualifierFamilyMap.entrySet()) {
                         List<RowCell> rowCells = row.getCells(entry.getValue(), entry.getKey());
                         if(rowCells != null && rowCells.size()>0){
@@ -225,9 +237,9 @@ public class BigTableUtil {
                         }
 
                     }
-		   
                 }
-                updateCache(hashKey, bigtableRowsMap);
+                asyncCommands.hmset(hashKey, bigtableRowsMap);
+               // updateCache(hashKey, bigtableRowsMap);
                 log.info("getRowsByRowKeyByPrefixWithRedisCache----Time taken for looping the result set of Rows to final " +
                         "final map: {} msc , total count {} , rowKeys Size {}, final count {} "
                         , System.currentTimeMillis() - queryTime, count ,rowKeys.size(), map.size());
@@ -273,8 +285,8 @@ public class BigTableUtil {
                     }
                 }
                 log.info("getRowsByRowKeyByPrefixWithMemcached--Cache--Time taken for looping the result set " +
-                                "of RowKey : {}  to final map: {} msc , total count {} , rowKeys Size {}, final count {} "
-                        ,rowKeyPrefix, System.currentTimeMillis() - queryTime, cacheMap.size() ,rowKeys.size(), map.size());
+                                "of Rows to final map: {} msc , total count {} , rowKeys Size {}, final count {} "
+                        , System.currentTimeMillis() - queryTime, mcc.get(rowKeyPrefix) ,rowKeys.size(), map.size());
             } else {
                 Query query = Query.create(tableId).prefix(rowKeyPrefix + "#");
                 long queryTime = System.currentTimeMillis();
@@ -314,11 +326,10 @@ public class BigTableUtil {
                     }
                     mcc.set(row.getKey().toStringUtf8(), 120 * 60, sb.toString());
                 }
-		//mcc.set(rowKeyPrefix, 120 * 60, String.valueOf(count));
                 mcc.set(rowKeyPrefix, 120 * 60, String.valueOf(count));
                 log.info("getRowsByRowKeyByPrefixWithMemcached--bigtable--Time taken for looping the result set of Rows to final " +
                                 "final map: {} msc , total count {} , rowKeys Size {}, final count {} "
-                        ,rowKeyPrefix, System.currentTimeMillis() - queryTime, count ,rowKeys.size(), map.size());
+                        , System.currentTimeMillis() - queryTime, count ,rowKeys.size(), map.size());
             }
 
         } catch (IOException e) {
