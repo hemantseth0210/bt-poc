@@ -14,6 +14,7 @@ import net.spy.memcached.MemcachedClient;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
 
 import javax.annotation.PreDestroy;
@@ -73,6 +74,7 @@ public class BigTableUtil {
             try {
                 client = BigtableDataClient.create(projectId, instanceId);
                 mcc = new MemcachedClient(new InetSocketAddress(discoveryEndpoint, 11211));
+                mcc.flush();
             } catch (IOException e) {
                 log.error("Connect failed!");
                 throw e;
@@ -223,8 +225,7 @@ public class BigTableUtil {
 
                     }
                 }
-                redisTemplate.opsForHash().putAll(hashKey, bigtableRowsMap);
-                redisTemplate.expire(hashKey, 120, TimeUnit.MINUTES);
+                updateCache(hashKey, bigtableRowsMap);
                 log.info("getRowsByRowKeyByPrefixWithRedisCache----Time taken for looping the result set of Rows to final " +
                         "final map: {} msc , total count {} , rowKeys Size {}, final count {} "
                         , System.currentTimeMillis() - queryTime, count ,rowKeys.size(), map.size());
@@ -235,6 +236,14 @@ public class BigTableUtil {
             log.debug(String.valueOf(e));
         }
         return map;
+    }
+
+    @Async
+    public void updateCache(String hashKey, Map<String, String> bigtableRowsMap) {
+        log.info("getRowsByRowKeyByPrefixWithRedisCache----Update Cache for hashkey {} ", hashKey);
+        redisTemplate.opsForHash().putAll(hashKey, bigtableRowsMap);
+        redisTemplate.expire(hashKey, 10, TimeUnit.SECONDS);
+        log.info("getRowsByRowKeyByPrefixWithRedisCache----Updated Cache for hashkey {} ", hashKey);
     }
 
     // With Memcached
@@ -263,7 +272,7 @@ public class BigTableUtil {
                 }
                 log.info("getRowsByRowKeyByPrefixWithMemcached--Cache--Time taken for looping the result set " +
                                 "of Rows to final map: {} msc , total count {} , rowKeys Size {}, final count {} "
-                        , System.currentTimeMillis() - queryTime, cacheMap.size() ,rowKeys.size(), map.size());
+                        , System.currentTimeMillis() - queryTime, mcc.get(rowKeyPrefix) ,rowKeys.size(), map.size());
             } else {
                 Query query = Query.create(tableId).prefix(rowKeyPrefix + "#");
                 long queryTime = System.currentTimeMillis();
@@ -303,6 +312,7 @@ public class BigTableUtil {
                     }
                     mcc.set(row.getKey().toStringUtf8(), 120 * 60, sb.toString());
                 }
+                mcc.set(rowKeyPrefix, 120 * 60, String.valueOf(count));
                 log.info("getRowsByRowKeyByPrefixWithMemcached--bigtable--Time taken for looping the result set of Rows to final " +
                                 "final map: {} msc , total count {} , rowKeys Size {}, final count {} "
                         , System.currentTimeMillis() - queryTime, count ,rowKeys.size(), map.size());
