@@ -239,6 +239,7 @@ public class BigTableUtil {
                     }
                 }
                 asyncCommands.hmset(hashKey, bigtableRowsMap);
+				asyncCommands.expire(hashKey, 10);
                // updateCache(hashKey, bigtableRowsMap);
                 log.info("getRowsByRowKeyByPrefixWithRedisCache----Time taken for looping the result set of Rows to final " +
                         "final map: {} msc , total count {} , rowKeys Size {}, final count {} "
