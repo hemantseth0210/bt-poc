@@ -208,6 +208,7 @@ public class BigTableUtil {
                 log.info("getRowsByRowKeyByPrefixWithRedisCache--Cache--Time taken for looping the result set " +
                                 "of Rows to final map: {} msc , total count {} , rowKeys Size {}, final count {} "
                         , System.currentTimeMillis() - queryTime, cacheMap.size() ,rowKeys.size(), map.size());
+                map.put("Cache" , "0");
             } else {
                 Query query = Query.create(tableId).prefix(rowKeyPrefix + "#");
                 long queryTime = System.currentTimeMillis();
@@ -239,16 +240,15 @@ public class BigTableUtil {
                             .forEach(bigtableRowsMap::putAll);
                 }
                 asyncCommands.hmset(hashKey, bigtableRowsMap);
-                asyncCommands.expire(hashKey, 20);
+                asyncCommands.expire(hashKey, 10);
                 //redisTemplate.opsForHash().putAll(hashKey, bigtableRowsMap);
                 //redisTemplate.expire(hashKey, 10, TimeUnit.SECONDS);
                // updateCache(hashKey, bigtableRowsMap);
 
-                log.info("getRowsByRowKeyByPrefixWithRedisCache----Time taken for looping the result set of Rows to final " +
+                log.info("getRowsByRowKeyByPrefixWithRedisCache--BigTable--Time taken for looping the result set of Rows to final " +
                         "final map: {} msc , total count {} , rowKeys Size {}, final count {} "
                         , System.currentTimeMillis() - queryTime, count ,rowKeys.size(), map.size());
-
-
+                map.put("BigTable" , "0");
             }
 
         } catch (IOException e) {
@@ -262,7 +262,7 @@ public class BigTableUtil {
         Map<String, String> map = new HashMap<>();
         List<RowCell> rowCells = row.getCells(family, qualifier);
         if(rowCells != null && rowCells.size()>0){
-            map.put(String.format("%s#%s",row.getKey().toStringUtf8(),family), rowCells.get(0) != null ? rowCells.get(0).getValue().toStringUtf8() : null);
+            map.put(String.format("%s#%s",row.getKey().toStringUtf8(),qualifier), rowCells.get(0) != null ? rowCells.get(0).getValue().toStringUtf8() : null);
         }
         return map;
     }
@@ -478,8 +478,13 @@ public class BigTableUtil {
         rowKeys.keySet().parallelStream()
                 .map(upc -> getRowsByRowKeyByPrefixWithRedisCache(upc, rowKeys.get(upc), qualifierFamilyMap))
                 .collect(Collectors.toList()).forEach(rowMap::putAll);
-        log.info("processNcpEligibleUpcsByPrefixPostWithRedisCache----Time taken for looping the result set of Rows to final map: {} msc , rowkeys {} , " +
-                "final count {} " , System.currentTimeMillis() - queryTime, rowKeys.size()*getLocationNumbers().size(), rowMap.size());
+        if(rowMap.containsKey("BigTable")){
+            log.info("processNcpEligibleUpcsByPrefixPostWithRedisCache--BigTable--Time taken for looping the result set of Rows to final map: {} msc , rowkeys {} , " +
+                    "final count {}, bigtable rows {} " , System.currentTimeMillis() - queryTime, rowKeys.size()*getLocationNumbers().size(), rowMap.size(), rowMap.get("BigTable"));
+        } else {
+            log.info("processNcpEligibleUpcsByPrefixPostWithRedisCache--Cache--Time taken for looping the result set of Rows to final map: {} msc , rowkeys {} , " +
+                    "final count {}, bigtable rows {}  " , System.currentTimeMillis() - queryTime, rowKeys.size()*getLocationNumbers().size(), rowMap.size(), rowMap.get("Cache"));
+        }
         return rowMap;
     }
 
