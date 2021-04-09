@@ -223,42 +223,46 @@ public class BigTableUtil {
                 for(Row row : rows) {
                     count++;
                     if(rowKeys.contains(row.getKey().toStringUtf8())) {
-                        for (Map.Entry<String, String> entry : qualifierFamilyMap.entrySet()) {
-                            List<RowCell> rowCells = row.getCells(entry.getValue(), entry.getKey());
-                            if(rowCells != null && rowCells.size()>0){
-                                map.put(String.format("%s#%s",row.getKey().toStringUtf8(),entry.getKey()),
-                                        rowCells.get(0) != null ? rowCells.get(0).getValue().toStringUtf8() : null);
-                                bigtableRowsMap.put(String.format("%s#%s",row.getKey().toStringUtf8(),entry.getKey()),
-                                        rowCells.get(0) != null ? rowCells.get(0).getValue().toStringUtf8() : null);
 
-                            }
-                        }
+                        qualifierFamilyMap.keySet().parallelStream()
+                                .map(qualifier -> readCellValue(row, qualifierFamilyMap.get(qualifier), qualifier))
+                                .collect(Collectors.toList())
+                                .forEach(val -> {
+                                    map.putAll(val);
+                                    bigtableRowsMap.putAll(val);
+                                });
                         continue;
                     }
-
-                    for (Map.Entry<String, String> entry : qualifierFamilyMap.entrySet()) {
-                        List<RowCell> rowCells = row.getCells(entry.getValue(), entry.getKey());
-                        if(rowCells != null && rowCells.size()>0){
-                            bigtableRowsMap.put(String.format("%s#%s",row.getKey().toStringUtf8(),entry.getKey()),
-                                    rowCells.get(0) != null ? rowCells.get(0).getValue().toStringUtf8() : null);
-                        }
-
-                    }
-
+                    qualifierFamilyMap.keySet().parallelStream()
+                            .map(qualifier -> readCellValue(row, qualifierFamilyMap.get(qualifier), qualifier))
+                            .collect(Collectors.toList())
+                            .forEach(bigtableRowsMap::putAll);
                 }
                 asyncCommands.hmset(hashKey, bigtableRowsMap);
                 asyncCommands.expire(hashKey, 20);
                 //redisTemplate.opsForHash().putAll(hashKey, bigtableRowsMap);
                 //redisTemplate.expire(hashKey, 10, TimeUnit.SECONDS);
                // updateCache(hashKey, bigtableRowsMap);
+
                 log.info("getRowsByRowKeyByPrefixWithRedisCache----Time taken for looping the result set of Rows to final " +
                         "final map: {} msc , total count {} , rowKeys Size {}, final count {} "
                         , System.currentTimeMillis() - queryTime, count ,rowKeys.size(), map.size());
+
+
             }
 
         } catch (IOException e) {
             //Create a dummy Row for the row key that throws an exception
             log.debug(String.valueOf(e));
+        }
+        return map;
+    }
+
+    private Map<String, String> readCellValue(Row row, String family, String qualifier){
+        Map<String, String> map = new HashMap<>();
+        List<RowCell> rowCells = row.getCells(family, qualifier);
+        if(rowCells != null && rowCells.size()>0){
+            map.put(String.format("%s#%s",row.getKey().toStringUtf8(),family), rowCells.get(0) != null ? rowCells.get(0).getValue().toStringUtf8() : null);
         }
         return map;
     }
