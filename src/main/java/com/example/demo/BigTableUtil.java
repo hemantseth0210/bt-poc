@@ -84,7 +84,8 @@ public class BigTableUtil {
             try {
                 client = BigtableDataClient.create(projectId, instanceId);
                 //mcc = new MemcachedClient(new InetSocketAddress(discoveryEndpoint, 11211));
-                RedisURI redisURI = RedisURI.create("172.21.108.67",6379);
+               // RedisURI redisURI = RedisURI.create("172.21.108.67",6379);
+                RedisURI redisURI = RedisURI.create("localhost",6379);
                 RedisClient redisClient = RedisClient.create(redisURI);
                 StatefulRedisConnection<String, String> connection = redisClient.connect();
                 syncCommands = connection.sync();
@@ -221,6 +222,7 @@ public class BigTableUtil {
                 ServerStream<Row> rows = connect().readRows(query);
                 int count = 0;
                 Map<String, String> bigtableRowsMap = new HashMap<>();
+                /*
                 for(Row row : rows) {
                     count++;
                     if(rowKeys.contains(row.getKey().toStringUtf8())) {
@@ -238,6 +240,28 @@ public class BigTableUtil {
                             .map(qualifier -> readCellValue(row, qualifierFamilyMap.get(qualifier), qualifier))
                             .collect(Collectors.toList())
                             .forEach(bigtableRowsMap::putAll);
+                }
+                
+                 */
+                for(Row row : rows) {
+                    count++;
+                    if(rowKeys.contains(row.getKey().toStringUtf8())) {
+                        for (Map.Entry<String, String> entry : qualifierFamilyMap.entrySet()) {
+                            List<RowCell> rowCells = row.getCells(entry.getValue(), entry.getKey());
+                            if(rowCells != null && rowCells.size()>0){
+                                map.put(row.getKey().toStringUtf8() + "#" + entry.getKey(),
+                                        rowCells.get(0) != null ? rowCells.get(0).getValue().toStringUtf8() : null);
+                            }
+                        }
+                    }
+                    for (Map.Entry<String, String> entry : qualifierFamilyMap.entrySet()) {
+                        List<RowCell> rowCells = row.getCells(entry.getValue(), entry.getKey());
+                        if(rowCells != null && rowCells.size()>0){
+                            bigtableRowsMap.put(row.getKey().toStringUtf8() + "#" + entry.getKey(),
+                                    rowCells.get(0) != null ? rowCells.get(0).getValue().toStringUtf8() : null);
+                        }
+
+                    }
                 }
                 asyncCommands.hmset(hashKey, bigtableRowsMap);
                 asyncCommands.expire(hashKey, 10);
