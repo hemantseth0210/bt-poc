@@ -194,8 +194,8 @@ public class BigTableUtil {
         Map<String, String> map = new HashMap<>();
         try {
             String hashKey = rowKeyPrefix + "#";
-            Map<Object, Object> cacheMap = redisTemplate.opsForHash().entries(hashKey);
-            //Map<String, String> cacheMap = syncCommands.hgetall(hashKey);
+            //Map<Object, Object> cacheMap = redisTemplate.opsForHash().entries(hashKey);
+            Map<String, String> cacheMap = syncCommands.hgetall(hashKey);
             if(cacheMap != null && cacheMap.size() > 0){
                 long queryTime = System.currentTimeMillis();
                 for(String rowKey : rowKeys) {
@@ -249,10 +249,10 @@ public class BigTableUtil {
                         for (Map.Entry<String, String> entry : qualifierFamilyMap.entrySet()) {
                             List<RowCell> rowCells = row.getCells(entry.getValue(), entry.getKey());
                             if(rowCells != null && rowCells.size()>0){
-                                map.put(row.getKey().toStringUtf8() + "#" + entry.getKey(),
-                                        rowCells.get(0) != null ? rowCells.get(0).getValue().toStringUtf8() : null);
-                                bigtableRowsMap.put(row.getKey().toStringUtf8() + "#" + entry.getKey(),
-                                        rowCells.get(0) != null ? rowCells.get(0).getValue().toStringUtf8() : null);
+                                String key = row.getKey().toStringUtf8() + "#" + entry.getKey();
+                                String value = rowCells.get(0) != null ? rowCells.get(0).getValue().toStringUtf8() : null;
+                                map.put(key, value);
+                                bigtableRowsMap.put(key, value);
                             }
                         }
                         continue;
@@ -266,10 +266,10 @@ public class BigTableUtil {
 
                     }
                 }
-                //asyncCommands.hmset(hashKey, bigtableRowsMap);
-                //asyncCommands.expire(hashKey, 10);
-                redisTemplate.opsForHash().putAll(hashKey, bigtableRowsMap);
-                redisTemplate.expire(hashKey, 10, TimeUnit.SECONDS);
+                asyncCommands.hmset(hashKey, bigtableRowsMap);
+                asyncCommands.expire(hashKey, 10);
+                //redisTemplate.opsForHash().putAll(hashKey, bigtableRowsMap);
+                //redisTemplate.expire(hashKey, 10, TimeUnit.SECONDS);
                // updateCache(hashKey, bigtableRowsMap);
 
                 log.info("getRowsByRowKeyByPrefixWithRedisCache--BigTable--Time taken for looping the result set of Rows to final " +
