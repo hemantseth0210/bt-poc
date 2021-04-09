@@ -84,8 +84,8 @@ public class BigTableUtil {
             try {
                 client = BigtableDataClient.create(projectId, instanceId);
                 //mcc = new MemcachedClient(new InetSocketAddress(discoveryEndpoint, 11211));
-               // RedisURI redisURI = RedisURI.create("172.21.108.67",6379);
-                RedisURI redisURI = RedisURI.create("localhost",6379);
+                RedisURI redisURI = RedisURI.create("172.21.108.67",6379);
+                //RedisURI redisURI = RedisURI.create("localhost",6379);
                 RedisClient redisClient = RedisClient.create(redisURI);
                 StatefulRedisConnection<String, String> connection = redisClient.connect();
                 syncCommands = connection.sync();
@@ -194,8 +194,8 @@ public class BigTableUtil {
         Map<String, String> map = new HashMap<>();
         try {
             String hashKey = rowKeyPrefix + "#";
-            //Map<Object, Object> cacheMap = redisTemplate.opsForHash().entries(hashKey);
-            Map<String, String> cacheMap = syncCommands.hgetall(hashKey);
+            Map<Object, Object> cacheMap = redisTemplate.opsForHash().entries(hashKey);
+            //Map<String, String> cacheMap = syncCommands.hgetall(hashKey);
             if(cacheMap != null && cacheMap.size() > 0){
                 long queryTime = System.currentTimeMillis();
                 for(String rowKey : rowKeys) {
@@ -241,7 +241,7 @@ public class BigTableUtil {
                             .collect(Collectors.toList())
                             .forEach(bigtableRowsMap::putAll);
                 }
-                
+
                  */
                 for(Row row : rows) {
                     count++;
@@ -251,8 +251,11 @@ public class BigTableUtil {
                             if(rowCells != null && rowCells.size()>0){
                                 map.put(row.getKey().toStringUtf8() + "#" + entry.getKey(),
                                         rowCells.get(0) != null ? rowCells.get(0).getValue().toStringUtf8() : null);
+                                bigtableRowsMap.put(row.getKey().toStringUtf8() + "#" + entry.getKey(),
+                                        rowCells.get(0) != null ? rowCells.get(0).getValue().toStringUtf8() : null);
                             }
                         }
+                        continue;
                     }
                     for (Map.Entry<String, String> entry : qualifierFamilyMap.entrySet()) {
                         List<RowCell> rowCells = row.getCells(entry.getValue(), entry.getKey());
@@ -263,10 +266,10 @@ public class BigTableUtil {
 
                     }
                 }
-                asyncCommands.hmset(hashKey, bigtableRowsMap);
-                asyncCommands.expire(hashKey, 10);
-                //redisTemplate.opsForHash().putAll(hashKey, bigtableRowsMap);
-                //redisTemplate.expire(hashKey, 10, TimeUnit.SECONDS);
+                //asyncCommands.hmset(hashKey, bigtableRowsMap);
+                //asyncCommands.expire(hashKey, 10);
+                redisTemplate.opsForHash().putAll(hashKey, bigtableRowsMap);
+                redisTemplate.expire(hashKey, 10, TimeUnit.SECONDS);
                // updateCache(hashKey, bigtableRowsMap);
 
                 log.info("getRowsByRowKeyByPrefixWithRedisCache--BigTable--Time taken for looping the result set of Rows to final " +
