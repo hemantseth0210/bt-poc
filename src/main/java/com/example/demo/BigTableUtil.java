@@ -8,9 +8,6 @@ import com.google.cloud.bigtable.data.v2.models.Query;
 import com.google.cloud.bigtable.data.v2.models.Row;
 import com.google.cloud.bigtable.data.v2.models.RowCell;
 import com.google.protobuf.ByteString;
-import io.lettuce.core.RedisClient;
-import io.lettuce.core.RedisURI;
-import io.lettuce.core.api.StatefulRedisConnection;
 import io.lettuce.core.api.async.RedisAsyncCommands;
 import io.lettuce.core.api.sync.RedisCommands;
 import lombok.Data;
@@ -18,17 +15,12 @@ import lombok.extern.slf4j.Slf4j;
 import net.spy.memcached.MemcachedClient;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
 import org.springframework.data.redis.core.RedisTemplate;
-import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
 
 import javax.annotation.PreDestroy;
 import java.io.IOException;
-import java.net.InetSocketAddress;
-import java.time.Duration;
 import java.util.*;
-import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 import static com.google.cloud.bigtable.data.v2.models.Filters.FILTERS;
@@ -52,13 +44,18 @@ public class BigTableUtil {
 
     private MemcachedClient mcc = null;
 
-    @Autowired
-    RedisTemplate<String, String> redisTemplate;
+  //  @Autowired
+   // RedisTemplate<String, String> redisTemplate;
 
     private String discoveryEndpoint;
 
-    private RedisCommands<String, String> syncCommands;
-    private RedisAsyncCommands<String, String> asyncCommands;
+    @Autowired
+    private RedisCommands<String, String> redisCommands;
+
+    @Autowired
+    private RedisAsyncCommands<String, String> redisAsyncCommandsCommands;
+
+   // private RedisAsyncCommands<String, String> asyncCommands;
 
     public BigTableUtil(@Value("${bigtable.project.id:}") String projectId,
                         @Value("${bigtable.instance.id:}") String instanceId,
@@ -83,13 +80,8 @@ public class BigTableUtil {
             log.info("Trying to connect to " + projectId + ":" + instanceId + ":" + tableId + " bigtable");
             try {
                 client = BigtableDataClient.create(projectId, instanceId);
-                //mcc = new MemcachedClient(new InetSocketAddress(discoveryEndpoint, 11211));
-                RedisURI redisURI = RedisURI.create("172.21.108.67",6379);
-                //RedisURI redisURI = RedisURI.create("localhost",6379);
-                RedisClient redisClient = RedisClient.create(redisURI);
-                StatefulRedisConnection<String, String> connection = redisClient.connect();
-                syncCommands = connection.sync();
-                asyncCommands = connection.async();
+               // asyncCommands = (RedisAsyncCommands<String, String>) redisTemplate.getConnectionFactory()
+                    //    .getConnection().getNativeConnection();
             } catch (IOException e) {
                 log.error("Connect failed!");
                 throw e;
@@ -99,61 +91,6 @@ public class BigTableUtil {
         return client;
     }
 
-    /**
-     * Query bigtable with a list of rowKeys (exact match)
-     * @param rowKeys List of row key to query
-     * @throws IOException when it's unable to connect to the BigTable
-     * @return Map<String, Row>
-     */
-    public Map<String, Row> getRowsByRowKey(List<String> rowKeys, String... families) throws IOException {
-        Query query = Query.create(tableId);
-        long queryTime = System.currentTimeMillis();
-        if(families.length == 0) {
-            query.filter(FILTERS.limit().cellsPerColumn(1));
-        } else {
-            query.filter(createQueryFilters(families));
-        }
-        rowKeys.forEach(query::rowKey);
-        log.info("Time taken for query creation: {} msc" , System.currentTimeMillis() - queryTime );
-        queryTime = System.currentTimeMillis() ;
-        Map<String, Row> rowMap = new HashMap<>();
-        ServerStream<Row> rows = connect().readRows(query);
-        log.info("Time taken for Bigtable readRows  : {} msc" , System.currentTimeMillis() - queryTime );
-        queryTime = System.currentTimeMillis();
-        int count = 0;
-        for(Row row : rows) {
-            count++;
-            rowMap.put(row.getKey().toStringUtf8(), row);
-        }
-        log.info("Time taken for looping the result set of Rows to final final map: {} msc , total count {} , rowKeys Size -{}, final count {} " , System.currentTimeMillis() - queryTime, count ,rowKeys.size(), rowMap.size());
-        return rowMap;
-    }
-
-    /**
-     * Query bigtable with a list of rowKeys (exact match)
-     * @param rowKeys List of row key to query
-     * @return Map<String, Row>
-     */
-    public Map<String, Row> getRowsByRowKeyInParallel(List<String> rowKeys, String... families) {
-        return rowKeys.parallelStream().map(rowKey -> {
-            try {
-                Row row;
-                if(families.length == 0) {
-                    row = connect().readRow(tableId, rowKey, FILTERS.limit().cellsPerColumn(1));
-                } else {
-                    row = connect().readRow(tableId, rowKey, createQueryFilters(families));
-                }
-                if(row == null) {
-                    log.error("Row for rowKey: {} is null. Return dummy row as fallback", rowKey);
-                    throw new IOException();
-                }
-                return row;
-            } catch (IOException e) {
-                //Create a dummy Row for the row key that throws an exception
-                return Row.create(ByteString.copyFromUtf8(rowKey), List.of(RowCell.create("", ByteString.copyFromUtf8(""), 0, Collections.singletonList(""), ByteString.copyFromUtf8(""))));
-            }
-        }).collect(Collectors.toConcurrentMap(row -> row.getKey().toStringUtf8(), row -> row));
-    }
 
     /**
      * Query bigtable with a toZip as Prefix query
@@ -195,7 +132,7 @@ public class BigTableUtil {
         try {
             String hashKey = rowKeyPrefix + "#";
             //Map<Object, Object> cacheMap = redisTemplate.opsForHash().entries(hashKey);
-            Map<String, String> cacheMap = syncCommands.hgetall(hashKey);
+            Map<String, String> cacheMap = redisCommands.hgetall(hashKey);
             if(cacheMap != null && cacheMap.size() > 0){
                 long queryTime = System.currentTimeMillis();
                 for(String rowKey : rowKeys) {
@@ -266,8 +203,8 @@ public class BigTableUtil {
 
                     }
                 }
-                asyncCommands.hmset(hashKey, bigtableRowsMap);
-                asyncCommands.expire(hashKey, 10);
+                redisAsyncCommandsCommands.hmset(hashKey, bigtableRowsMap);
+                redisAsyncCommandsCommands.expire(hashKey, 10);
                 //redisTemplate.opsForHash().putAll(hashKey, bigtableRowsMap);
                 //redisTemplate.expire(hashKey, 10, TimeUnit.SECONDS);
                // updateCache(hashKey, bigtableRowsMap);
@@ -294,13 +231,7 @@ public class BigTableUtil {
         return map;
     }
 
-    @Async
-    public void updateCache(String hashKey, Map<String, String> bigtableRowsMap) {
-        log.info("getRowsByRowKeyByPrefixWithRedisCache----Update Cache for hashkey {} ", hashKey);
-        redisTemplate.opsForHash().putAll(hashKey, bigtableRowsMap);
-        redisTemplate.expire(hashKey, 10, TimeUnit.SECONDS);
-        log.info("getRowsByRowKeyByPrefixWithRedisCache----Updated Cache for hashkey {} ", hashKey);
-    }
+
 
     // With Memcached
     public Map<String, Map<String, String>> getRowsByRowKeyByPrefixWithMemcached(String rowKeyPrefix, Set<String> rowKeys,
