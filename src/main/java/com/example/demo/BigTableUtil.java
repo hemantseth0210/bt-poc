@@ -261,6 +261,7 @@ public class BigTableUtil {
                 log.info("getRowsByRowKeyByPrefixWithMemcached--Cache--Time taken for looping the result set " +
                                 "of Rows to final map: {} msc , total count {} , rowKeys Size {}, final count {} "
                         , System.currentTimeMillis() - queryTime, 0 ,rowKeys.size(), map.size());
+                map.put("Cache" , new HashMap<>());
             } else {
                 Query query = Query.create(tableId).prefix(rowKeyPrefix + "#");
                 long queryTime = System.currentTimeMillis();
@@ -312,6 +313,7 @@ public class BigTableUtil {
                 log.info("getRowsByRowKeyByPrefixWithMemcached--bigtable--Time taken for looping the result set of Rows to final " +
                                 "final map: {} msc , total count {} , rowKeys Size {}, final count {} "
                         , System.currentTimeMillis() - queryTime, count ,rowKeys.size(), map.size());
+                map.put("BigTable" , new HashMap<>());
             }
 
         } catch (IOException e) {
@@ -467,8 +469,14 @@ public class BigTableUtil {
         rowKeys.keySet().parallelStream()
                 .map(upc -> getRowsByRowKeyByPrefixWithMemcached(upc, rowKeys.get(upc), qualifierFamilyMap))
                 .collect(Collectors.toList()).forEach(rowMap::putAll);
-        log.info("processNcpEligibleUpcsByPrefixPostWithMemcached----Time taken for looping the result set of Rows to final map: {} msc , rowkeys {} , " +
-                "final count {} " , System.currentTimeMillis() - queryTime, rowKeys.size()*getLocationNumbers().size(), rowMap.size());
+        if(rowMap.containsKey("BigTable")){
+            log.info("processNcpEligibleUpcsByPrefixPostWithMemcached--BigTable--Time taken for looping the result set of Rows to final map: {} msc , rowkeys {} , " +
+                    "final count {} " , System.currentTimeMillis() - queryTime, rowKeys.size()*getLocationNumbers().size(), rowMap.size());
+        } else {
+            log.info("processNcpEligibleUpcsByPrefixPostWithMemcached--Cache--Time taken for looping the result set of Rows to final map: {} msc , rowkeys {} , " +
+                    "final count {} " , System.currentTimeMillis() - queryTime, rowKeys.size()*getLocationNumbers().size(), rowMap.size());
+        }
+
         return rowMap;
     }
 
