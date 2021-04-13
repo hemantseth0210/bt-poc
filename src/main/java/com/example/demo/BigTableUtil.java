@@ -132,8 +132,8 @@ public class BigTableUtil {
         Map<String, String> map = new HashMap<>();
         try {
             String hashKey = rowKeyPrefix + "#";
-            Map<Object, Object> cacheMap = redisTemplate.opsForHash().entries(hashKey);
-            //Map<String, String> cacheMap = redisCommands.hgetall(hashKey);
+            //Map<Object, Object> cacheMap = redisTemplate.opsForHash().entries(hashKey);
+            Map<String, String> cacheMap = redisCommands.hgetall(hashKey);
             if(cacheMap != null && cacheMap.size() > 0){
                 long queryTime = System.currentTimeMillis();
                 for(String rowKey : rowKeys) {
@@ -204,10 +204,10 @@ public class BigTableUtil {
 
                     }
                 }
-                //redisAsyncCommandsCommands.hmset(hashKey, bigtableRowsMap);
-                //redisAsyncCommandsCommands.expire(hashKey, 100);
-                redisTemplate.opsForHash().putAll(hashKey, bigtableRowsMap);
-                redisTemplate.expire(hashKey, 10, TimeUnit.SECONDS);
+                redisAsyncCommandsCommands.hmset(hashKey, bigtableRowsMap);
+                redisAsyncCommandsCommands.expire(hashKey, 7200);
+                //redisTemplate.opsForHash().putAll(hashKey, bigtableRowsMap);
+                //redisTemplate.expire(hashKey, 10, TimeUnit.SECONDS);
                // updateCache(hashKey, bigtableRowsMap);
 
                 log.info("getRowsByRowKeyByPrefixWithRedisCache--BigTable--Time taken for looping the result set of Rows to final " +
