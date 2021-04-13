@@ -20,7 +20,9 @@ import org.springframework.stereotype.Component;
 
 import javax.annotation.PreDestroy;
 import java.io.IOException;
+import java.net.InetSocketAddress;
 import java.util.*;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 import static com.google.cloud.bigtable.data.v2.models.Filters.FILTERS;
@@ -80,8 +82,7 @@ public class BigTableUtil {
             log.info("Trying to connect to " + projectId + ":" + instanceId + ":" + tableId + " bigtable");
             try {
                 client = BigtableDataClient.create(projectId, instanceId);
-               // asyncCommands = (RedisAsyncCommands<String, String>) redisTemplate.getConnectionFactory()
-                    //    .getConnection().getNativeConnection();
+                mcc = new MemcachedClient(new InetSocketAddress(discoveryEndpoint, 11211));
             } catch (IOException e) {
                 log.error("Connect failed!");
                 throw e;
@@ -204,7 +205,7 @@ public class BigTableUtil {
                     }
                 }
                 redisAsyncCommandsCommands.hmset(hashKey, bigtableRowsMap);
-                redisAsyncCommandsCommands.expire(hashKey, 10);
+                redisAsyncCommandsCommands.expire(hashKey, 100);
                 //redisTemplate.opsForHash().putAll(hashKey, bigtableRowsMap);
                 //redisTemplate.expire(hashKey, 10, TimeUnit.SECONDS);
                // updateCache(hashKey, bigtableRowsMap);
@@ -259,7 +260,7 @@ public class BigTableUtil {
                 }
                 log.info("getRowsByRowKeyByPrefixWithMemcached--Cache--Time taken for looping the result set " +
                                 "of Rows to final map: {} msc , total count {} , rowKeys Size {}, final count {} "
-                        , System.currentTimeMillis() - queryTime, mcc.get(rowKeyPrefix) ,rowKeys.size(), map.size());
+                        , System.currentTimeMillis() - queryTime, 0 ,rowKeys.size(), map.size());
             } else {
                 Query query = Query.create(tableId).prefix(rowKeyPrefix + "#");
                 long queryTime = System.currentTimeMillis();
@@ -275,14 +276,22 @@ public class BigTableUtil {
                 for(Row row : rows) {
                     count++;
                     if(rowKeys.contains(row.getKey().toStringUtf8())) {
+                        int i = 0;
                         Map<String, String> qualifierMap = new HashMap<>();
                         for (Map.Entry<String, String> entry : qualifierFamilyMap.entrySet()) {
                             List<RowCell> rowCells = row.getCells(entry.getValue(), entry.getKey());
                             if(rowCells != null && rowCells.size()>0){
                                 qualifierMap.put(entry.getKey(), rowCells.get(0) != null ? rowCells.get(0).getValue().toStringUtf8() : null);
+                                if(i == 0){
+                                    sb.append(entry.getKey()).append(":").append(rowCells.get(0) != null ? rowCells.get(0).getValue().toStringUtf8() : null);
+                                } else {
+                                    sb.append("#").append(entry.getKey()).append(":").append(rowCells.get(0) != null ? rowCells.get(0).getValue().toStringUtf8() : null);
+                                }
+                                i++;
                             }
                         }
                         map.put(row.getKey().toStringUtf8(), qualifierMap);
+                        continue;
                     }
                     sb = new StringBuilder();
                     int i = 0;
@@ -297,9 +306,8 @@ public class BigTableUtil {
                             i++;
                         }
                     }
-                    mcc.set(row.getKey().toStringUtf8(), 120 * 60, sb.toString());
+                    mcc.set(row.getKey().toStringUtf8(), 10, sb.toString());
                 }
-                mcc.set(rowKeyPrefix, 120 * 60, String.valueOf(count));
                 log.info("getRowsByRowKeyByPrefixWithMemcached--bigtable--Time taken for looping the result set of Rows to final " +
                                 "final map: {} msc , total count {} , rowKeys Size {}, final count {} "
                         , System.currentTimeMillis() - queryTime, count ,rowKeys.size(), map.size());
