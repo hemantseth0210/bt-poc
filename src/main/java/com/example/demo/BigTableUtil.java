@@ -272,10 +272,10 @@ public class BigTableUtil {
                 ServerStream<Row> rows = connect().readRows(query);
                 queryTime = System.currentTimeMillis();
                 int count = 0;
-                StringBuilder sb = null;
                 for(Row row : rows) {
                     count++;
                     if(rowKeys.contains(row.getKey().toStringUtf8())) {
+                        StringBuilder sb = new StringBuilder();
                         int i = 0;
                         Map<String, String> qualifierMap = new HashMap<>();
                         for (Map.Entry<String, String> entry : qualifierFamilyMap.entrySet()) {
@@ -291,9 +291,10 @@ public class BigTableUtil {
                             }
                         }
                         map.put(row.getKey().toStringUtf8(), qualifierMap);
+                        mcc.set(row.getKey().toStringUtf8(), 10, sb.toString());
                         continue;
                     }
-                    sb = new StringBuilder();
+                    StringBuilder sb = new StringBuilder();
                     int i = 0;
                     for (Map.Entry<String, String> entry : qualifierFamilyMap.entrySet()) {
                         List<RowCell> rowCells = row.getCells(entry.getValue(), entry.getKey());
