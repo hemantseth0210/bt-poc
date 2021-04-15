@@ -60,19 +60,17 @@ public class BigTableUtil {
 
    // private RedisAsyncCommands<String, String> asyncCommands;
 
-    private ReentrantLock lock;
+    private ReentrantLock lock = new ReentrantLock();
     private static int counter = 0;
 
     public BigTableUtil(@Value("${bigtable.project.id:}") String projectId,
                         @Value("${bigtable.instance.id:}") String instanceId,
                         @Value("${bigtable.tableId:}") String tableId,
-                        @Value("${memcached.host:}") String discoveryEndpoint,
-                        ReentrantLock lock) throws IOException {
+                        @Value("${memcached.host:}") String discoveryEndpoint) throws IOException {
         this.projectId = projectId;
         this.instanceId = instanceId;
         this.tableId = tableId;
         this.discoveryEndpoint = discoveryEndpoint;
-        this.lock = new ReentrantLock();
         //Skip establishing bigtable connection if either of these properties blank
         if(!projectId.isBlank() && !instanceId.isBlank() && !tableId.isBlank()) {
             connect();
