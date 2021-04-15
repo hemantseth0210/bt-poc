@@ -23,6 +23,7 @@ import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.stream.Collectors;
 
 import static com.google.cloud.bigtable.data.v2.models.Filters.FILTERS;
@@ -59,14 +60,19 @@ public class BigTableUtil {
 
    // private RedisAsyncCommands<String, String> asyncCommands;
 
+    private ReentrantLock lock;
+    private static int counter = 0;
+
     public BigTableUtil(@Value("${bigtable.project.id:}") String projectId,
                         @Value("${bigtable.instance.id:}") String instanceId,
                         @Value("${bigtable.tableId:}") String tableId,
-                        @Value("${memcached.host:}") String discoveryEndpoint) throws IOException {
+                        @Value("${memcached.host:}") String discoveryEndpoint,
+                        ReentrantLock lock) throws IOException {
         this.projectId = projectId;
         this.instanceId = instanceId;
         this.tableId = tableId;
         this.discoveryEndpoint = discoveryEndpoint;
+        this.lock = new ReentrantLock();
         //Skip establishing bigtable connection if either of these properties blank
         if(!projectId.isBlank() && !instanceId.isBlank() && !tableId.isBlank()) {
             connect();
@@ -292,7 +298,7 @@ public class BigTableUtil {
                             }
                         }
                         map.put(row.getKey().toStringUtf8(), qualifierMap);
-                        mcc.set(row.getKey().toStringUtf8(), 10, sb.toString());
+                        mcc.set(row.getKey().toStringUtf8(), 7200, sb.toString());
                         continue;
                     }
                     StringBuilder sb = new StringBuilder();
@@ -308,7 +314,7 @@ public class BigTableUtil {
                             i++;
                         }
                     }
-                    mcc.set(row.getKey().toStringUtf8(), 10, sb.toString());
+                    mcc.set(row.getKey().toStringUtf8(), 7200, sb.toString());
                 }
                 log.info("getRowsByRowKeyByPrefixWithMemcached--bigtable--Time taken for looping the result set of Rows to final " +
                                 "final map: {} msc , total count {} , rowKeys Size {}, final count {} "
@@ -436,6 +442,7 @@ public class BigTableUtil {
     }
 
     public Map<String, String> processNcpEligibleUpcsByPrefixPostWithRedisCache(List<String> upcs, String... families) {
+        log.info("Serving Request number {} " , increaseCounter());
         Map<String, Set<String>> rowKeys = prepareUpcsAndLocs(upcs);
         Map<String, String> rowMap = new HashMap<>();
         Map<String, String> qualifierFamilyMap = new HashMap<>();
@@ -458,6 +465,7 @@ public class BigTableUtil {
     }
 
     public Map<String, Map<String, String>> processNcpEligibleUpcsByPrefixPostWithMemcached(List<String> upcs, String... families) {
+        log.info("Serving Request number {} " , increaseCounter());
         Map<String, Set<String>> rowKeys = prepareUpcsAndLocs(upcs);
         Map<String, Map<String, String>> rowMap = new HashMap<>();
         Map<String, String> qualifierFamilyMap = new HashMap<>();
@@ -991,6 +999,17 @@ public class BigTableUtil {
         upcsList.add(upcs5);
         upcsList.add(upcs6);
         return upcsList;
+    }
+
+    private int increaseCounter() {
+        int count = 0;
+        lock.lock();
+        try {
+            count = counter++;
+        } finally {
+            lock.unlock();
+        }
+        return count;
     }
 
 

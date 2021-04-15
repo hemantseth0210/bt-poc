@@ -16,7 +16,7 @@ public class BigTableByPrefixTest {
 
     @BeforeEach
     public void init() throws IOException {
-        bigTableUtil = new BigTableUtil("mtech-pfl-poc", "pfl-poc-bt", "cost-optimization","");
+        bigTableUtil = new BigTableUtil("mtech-pfl-poc", "pfl-poc-bt", "cost-optimization","", null);
     }
 
     @Test
