@@ -21,11 +21,6 @@ public class BigtableController {
         return bigTableUtil.getRowsByRowKeyByPrefix("30097",new HashSet<>(rowKeys), "sptrcst", "trstcst");
     }
 
-    @GetMapping("/processNcpEligibleUpcsByPrefix")
-    public Map<String, Row> processNcpEligibleUpcsByPrefix() throws IOException {
-        return bigTableUtil.processNcpEligibleUpcsByPrefix(bigTableUtil.getUpcAndLocData(), "cfinvc", "cfcg");
-    }
-
     @PostMapping("/processNcpEligibleUpcsByPrefixPost")
     public Map<String, Row> processNcpEligibleUpcsByPrefixPost(@RequestBody List<String> upcs) throws IOException {
         return bigTableUtil.processNcpEligibleUpcsByPrefixPost(upcs, "cfinvc", "cfcg");
