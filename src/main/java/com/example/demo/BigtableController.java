@@ -21,19 +21,9 @@ public class BigtableController {
         return bigTableUtil.getRowsByRowKeyByPrefix("30097",new HashSet<>(rowKeys), "sptrcst", "trstcst");
     }
 
-    @GetMapping("/getRowsByRowKeyByRange")
-    public Map<String, Row> getRowsByRowKeyByRange(@RequestBody List<String> rowKeys) throws IOException {
-        return bigTableUtil.getRowsByRowKeyByRange(rowKeys, "sptrcst", "trstcst");
-    }
-
     @GetMapping("/processNcpEligibleUpcsByPrefix")
     public Map<String, Row> processNcpEligibleUpcsByPrefix() throws IOException {
         return bigTableUtil.processNcpEligibleUpcsByPrefix(bigTableUtil.getUpcAndLocData(), "cfinvc", "cfcg");
-    }
-
-    @GetMapping("/processNcpEligibleUpcsByRange")
-    public Map<String, Row> processNcpEligibleUpcsByRange() throws IOException {
-        return bigTableUtil.processNcpEligibleUpcsByRange(bigTableUtil.getUpcAndLocData(), "cfinvc", "cfcg");
     }
 
     @PostMapping("/processNcpEligibleUpcsByPrefixPost")
@@ -41,18 +31,23 @@ public class BigtableController {
         return bigTableUtil.processNcpEligibleUpcsByPrefixPost(upcs, "cfinvc", "cfcg");
     }
 
-    @PostMapping("/processNcpEligibleUpcsByRangePost")
-    public Map<String, Row> processNcpEligibleUpcsByRangePost(@RequestBody List<String> upcs) throws IOException {
-        return bigTableUtil.processNcpEligibleUpcsByRangePost(upcs, "cfinvc", "cfcg");
-    }
-
-    @PostMapping("/processNcpEligibleUpcsByPrefixPostWithRedisCache")
-    public Map<String, String> processNcpEligibleUpcsByPrefixPostWithRedisCache(@RequestBody List<String> upcs) throws IOException {
+    @GetMapping("/processNcpEligibleUpcsByPrefixPostWithRedisCache")
+    public Map<String, String> processNcpEligibleUpcsByPrefixPostWithRedisCache() throws IOException {
+        List<String> upcs = bigTableUtil.getRandomUpcs();
         return bigTableUtil.processNcpEligibleUpcsByPrefixPostWithRedisCache(upcs, "cfinvc", "cfcg");
     }
 
-    @PostMapping("/processNcpEligibleUpcsByPrefixPostWithMemcached")
-    public Map<String, Map<String, String>> processNcpEligibleUpcsByPrefixPostWithMemcached(@RequestBody List<String> upcs) throws IOException {
+    @GetMapping("/processNcpEligibleUpcsByPrefixPostWithMemcached")
+    public Map<String, Map<String, String>> processNcpEligibleUpcsByPrefixPostWithMemcached() throws IOException {
+        List<String> upcs = bigTableUtil.getRandomUpcs();
         return bigTableUtil.processNcpEligibleUpcsByPrefixPostWithMemcached(upcs, "cfinvc", "cfcg");
+    }
+
+    @GetMapping("/processNcpEligibleUpcsByPrefixPostWithLRUCache")
+    public Map<String, String> processNcpEligibleUpcsByPrefixPostWithLRUCache() throws IOException {
+        List<String> upcs = bigTableUtil.getRandomUpcs();
+        //List<String> upcs = new ArrayList<>();
+        //upcs.add("12214268527");
+        return bigTableUtil.processNcpEligibleUpcsByPrefixPostWithLRUCache(upcs, "cfinvc", "cfcg");
     }
 }

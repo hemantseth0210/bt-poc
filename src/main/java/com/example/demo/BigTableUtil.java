@@ -16,11 +16,18 @@ import net.spy.memcached.MemcachedClient;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
 import org.springframework.stereotype.Component;
+import org.springframework.web.client.RestTemplate;
 
 import javax.annotation.PreDestroy;
+import java.io.BufferedReader;
+import java.io.FileReader;
 import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantLock;
@@ -52,16 +59,18 @@ public class BigTableUtil {
 
     private String discoveryEndpoint;
 
-    @Autowired
+    //@Autowired
     private RedisCommands<String, String> redisCommands;
 
-    @Autowired
+    //@Autowired
     private RedisAsyncCommands<String, String> redisAsyncCommandsCommands;
 
    // private RedisAsyncCommands<String, String> asyncCommands;
 
     private ReentrantLock lock = new ReentrantLock();
     private static int counter = 0;
+    LRUCache<String, Map<String, String>> lruCache;
+    List<String> upcs;
 
     public BigTableUtil(@Value("${bigtable.project.id:}") String projectId,
                         @Value("${bigtable.instance.id:}") String instanceId,
@@ -86,7 +95,9 @@ public class BigTableUtil {
             log.info("Trying to connect to " + projectId + ":" + instanceId + ":" + tableId + " bigtable");
             try {
                 client = BigtableDataClient.create(projectId, instanceId);
-                mcc = new MemcachedClient(new InetSocketAddress(discoveryEndpoint, 11211));
+               // mcc = new MemcachedClient(new InetSocketAddress(discoveryEndpoint, 11211));
+                lruCache = new LRUCache(32000);
+                upcs = getUpcs();
             } catch (IOException e) {
                 log.error("Connect failed!");
                 throw e;
@@ -327,40 +338,70 @@ public class BigTableUtil {
         return map;
     }
 
-
-    public Map<String, Row> getRowsByRowKeyByRange(List<String> rowKeys, String... families) {
-        Map<String, Row> map = new HashMap<>();
+    // With In Memory LRU Cache
+    public Map<String, String> getRowsByRowKeyByPrefixWithLRUCache(String rowKeyPrefix, Set<String> rowKeys,
+                                                                     Map<String, String> qualifierFamilyMap) {
+        Map<String, String> map = new HashMap<>();
         try {
-            int rangeSize = 50;
-            int range = rowKeys.size() / rangeSize;
-            Query query = Query.create(tableId);
-            int index = 0;
-            for(int i=0; i <= range; i++){
-                if(rowKeys.size() - index < rangeSize){
-                    query = query.range(rowKeys.get(index), rowKeys.get(rowKeys.size()-1));
-                } else {
-                    query = query.range(rowKeys.get(index), rowKeys.get(index + rangeSize - 1));
-                    index += rangeSize;
+            String hashKey = rowKeyPrefix + "#";
+            Map<String, String> cacheMap = lruCache.get(hashKey);
+            if(cacheMap != null && cacheMap.size() > 0){
+                long queryTime = System.currentTimeMillis();
+                for(String rowKey : rowKeys) {
+                    for (Map.Entry<String, String> entry : qualifierFamilyMap.entrySet()) {
+                        String mappedRowkey = rowKey.concat("#").concat(entry.getKey());
+                        if(cacheMap.containsKey(mappedRowkey)) {
+                            map.put(mappedRowkey, (String) cacheMap.get(mappedRowkey));
+                        }
+                    }
                 }
-
-            }
-
-            long queryTime = System.currentTimeMillis();
-            if (families != null && families.length > 0) {
-                String familyRegex = String.join("|", families);
-                Filters.Filter filter  = FILTERS.family().regex(familyRegex);
-                query.filter(filter);
-            }
-            ServerStream<Row> rows = connect().readRows(query);
-            queryTime = System.currentTimeMillis();
-            int count = 0;
-            for(Row row : rows) {
-                count++;
-                if(rowKeys.contains(row.getKey().toStringUtf8())) {
-                    map.put(row.getKey().toStringUtf8(), row);
+                log.info("getRowsByRowKeyByPrefixWithLRUCache--Cache--Time taken for looping the result set " +
+                                "of Rows to final map: {} msc , total count {} , rowKeys Size {}, final count {} "
+                        , System.currentTimeMillis() - queryTime, cacheMap.size() ,rowKeys.size(), map.size());
+                map.put("Cache" , "0");
+            } else {
+                Query query = Query.create(tableId).prefix(rowKeyPrefix + "#");
+                long queryTime = System.currentTimeMillis();
+                if (qualifierFamilyMap != null && qualifierFamilyMap.size() > 0) {
+                    String familyRegex = String.join("|", new HashSet<>(qualifierFamilyMap.values()));
+                    Filters.Filter filter  = FILTERS.family().regex(familyRegex);
+                    query.filter(filter);
                 }
+                queryTime = System.currentTimeMillis();
+                ServerStream<Row> rows = connect().readRows(query);
+                int count = 0;
+                Map<String, String> bigtableRowsMap = new HashMap<>();
+
+                for(Row row : rows) {
+                    count++;
+                    if(rowKeys.contains(row.getKey().toStringUtf8())) {
+                        for (Map.Entry<String, String> entry : qualifierFamilyMap.entrySet()) {
+                            List<RowCell> rowCells = row.getCells(entry.getValue(), entry.getKey());
+                            if(rowCells != null && rowCells.size()>0){
+                                String key = row.getKey().toStringUtf8() + "#" + entry.getKey();
+                                String value = rowCells.get(0) != null ? rowCells.get(0).getValue().toStringUtf8() : null;
+                                map.put(key, value);
+                                bigtableRowsMap.put(key, value);
+                            }
+                        }
+                        continue;
+                    }
+                    for (Map.Entry<String, String> entry : qualifierFamilyMap.entrySet()) {
+                        List<RowCell> rowCells = row.getCells(entry.getValue(), entry.getKey());
+                        if(rowCells != null && rowCells.size()>0){
+                            bigtableRowsMap.put(row.getKey().toStringUtf8() + "#" + entry.getKey(),
+                                    rowCells.get(0) != null ? rowCells.get(0).getValue().toStringUtf8() : null);
+                        }
+
+                    }
+                }
+                lruCache.put(hashKey, bigtableRowsMap);
+                log.info("getRowsByRowKeyByPrefixWithLRUCache--BigTable--Time taken for looping the result set of Rows to final " +
+                                "final map: {} msc , total count {} , rowKeys Size {}, final count {} "
+                        , System.currentTimeMillis() - queryTime, count ,rowKeys.size(), map.size());
+                map.put("BigTable" , "0");
             }
-            log.info("getRowsByRowKeyByRange----Time taken for looping the result set of Rows to final final map: {} msc , total count {} , rowKeys Size {}, final count {} " , System.currentTimeMillis() - queryTime, count ,rowKeys.size(), map.size());
+
         } catch (IOException e) {
             //Create a dummy Row for the row key that throws an exception
             log.debug(String.valueOf(e));
@@ -368,40 +409,6 @@ public class BigTableUtil {
         return map;
     }
 
-    public Map<String, Row> getRowsByRowKeyByRange(Map<String, Set<String>> rowKeys, String... families) {
-        Map<String, Row> map = new HashMap<>();
-        List<String> rowKeysList = new ArrayList<>();
-        try {
-            Query query = Query.create(tableId);
-            for(Map.Entry<String, Set<String>> entry :  rowKeys.entrySet()){
-                List<String> values = new ArrayList<>(entry.getValue());
-                Collections.sort(values);
-                rowKeysList.addAll(values);
-                query = query.range(values.get(0), values.get(values.size()-1));
-            }
-
-            long queryTime = System.currentTimeMillis();
-            if (families != null && families.length > 0) {
-                String familyRegex = String.join("|", families);
-                Filters.Filter filter  = FILTERS.family().regex(familyRegex);
-                query.filter(filter);
-            }
-            ServerStream<Row> rows = connect().readRows(query);
-            queryTime = System.currentTimeMillis();
-            int count = 0;
-            for(Row row : rows) {
-                count++;
-                if(rowKeysList.contains(row.getKey().toStringUtf8())) {
-                    map.put(row.getKey().toStringUtf8(), row);
-                }
-            }
-            log.info("getRowsByRowKeyByRange----Time taken for looping the result set of Rows to final final map: {} msc , total count {} , rowKeys Size {}, final count {} " , System.currentTimeMillis() - queryTime, count ,rowKeysList.size(), map.size());
-        } catch (IOException e) {
-            //Create a dummy Row for the row key that throws an exception
-            log.debug(String.valueOf(e));
-        }
-        return map;
-    }
 
     public Map<String, Row> processNcpEligibleUpcsByPrefix(Map<String, Set<String>> rowKeys, String... families) {
         Map<String, Row> rowMap = new HashMap<>();
@@ -412,19 +419,6 @@ public class BigTableUtil {
         log.info("processNcpEligibleUpcsByPrefix----Time taken for looping the result set of Rows to final map: {} msc , total count {} , " +
                 "final count {} " , System.currentTimeMillis() - queryTime, rowKeys.size(), rowMap.size());
         return rowMap;
-    }
-
-    public Map<String, Row> processNcpEligibleUpcsByRange(Map<String, Set<String>> rowKeys, String... families) {
-        List<String> allRowkeys = new ArrayList<>();
-        for(Set<String> rowKeySet : rowKeys.values()){
-            allRowkeys.addAll(rowKeySet);
-        }
-        Collections.sort(allRowkeys);
-        long queryTime = System.currentTimeMillis();
-        Map<String, Row> result =  getRowsByRowKeyByRange(allRowkeys, families);
-        log.info("processNcpEligibleUpcsByRange----Time taken for looping the result set of Rows to final map: {} msc , total count {} , " +
-                "final count {} " , System.currentTimeMillis() - queryTime, allRowkeys.size(), result.size());
-        return result;
     }
 
     public Map<String, Row> processNcpEligibleUpcsByPrefixPost(List<String> upcs, String... families) {
@@ -486,21 +480,27 @@ public class BigTableUtil {
         return rowMap;
     }
 
-    public Map<String, Row> processNcpEligibleUpcsByRangePost(List<String> upcs, String... families) {
+    public Map<String, String> processNcpEligibleUpcsByPrefixPostWithLRUCache(List<String> upcs, String... families) {
+        //log.info("Serving Request number {} " , increaseCounter());
         Map<String, Set<String>> rowKeys = prepareUpcsAndLocs(upcs);
-       /* List<String> allRowKeys = new ArrayList<>();
-        for(Map.Entry<String, Set<String>> entry :  rowKeys.entrySet()){
-            allRowKeys.addAll(entry.getValue());
-        }
-        Collections.sort(allRowKeys);
-
-        */
+        Map<String, String> rowMap = new HashMap<>();
+        Map<String, String> qualifierFamilyMap = new HashMap<>();
+        qualifierFamilyMap.put("congruency_f", "cfcg");
+        qualifierFamilyMap.put("ats_thld", "cfinvc");
+        qualifierFamilyMap.put("inv_diff", "cfinvc");
+        qualifierFamilyMap.put("inv_overrd", "cfinvc");
         long queryTime = System.currentTimeMillis();
-        //Map<String, Row> result =  getRowsByRowKeyByRange(allRowKeys, families);
-        Map<String, Row> result =  getRowsByRowKeyByRange(rowKeys, families);
-        log.info("processNcpEligibleUpcsByRangePost----Time taken for looping the result set of Rows to final map: {} msc ,  " +
-                "final count {} " , System.currentTimeMillis() - queryTime,  result.size());
-        return result;
+        rowKeys.keySet().parallelStream()
+                .map(upc -> getRowsByRowKeyByPrefixWithLRUCache(upc, rowKeys.get(upc), qualifierFamilyMap))
+                .collect(Collectors.toList()).forEach(rowMap::putAll);
+        if(rowMap.containsKey("BigTable")){
+            log.info("processNcpEligibleUpcsByPrefixPostWithLRUCache--BigTable--Time taken for looping the result set of Rows to final map: {} msc , rowkeys {} , " +
+                    "final count {}, bigtable rows {} " , System.currentTimeMillis() - queryTime, rowKeys.size()*getLocationNumbers().size(), rowMap.size(), rowMap.get("BigTable"));
+        } else {
+            log.info("processNcpEligibleUpcsByPrefixPostWithLRUCache--Cache--Time taken for looping the result set of Rows to final map: {} msc , rowkeys {} , " +
+                    "final count {}, bigtable rows {}  " , System.currentTimeMillis() - queryTime, rowKeys.size()*getLocationNumbers().size(), rowMap.size(), rowMap.get("Cache"));
+        }
+        return rowMap;
     }
 
     /**
@@ -1008,6 +1008,36 @@ public class BigTableUtil {
             lock.unlock();
         }
         return count;
+    }
+
+    public List<String> getRandomUpcs(){
+        //List<String> upcs = getUpcs();
+        List<String> finalUpcsList = new ArrayList<>();
+        Collections.shuffle(upcs, new Random(upcs.size()));
+        Random rand = new Random();
+        for (int i = 0; i < 10; i++) {
+            int randomIndex = rand.nextInt(upcs.size());
+            finalUpcsList.add(upcs.get(randomIndex));
+        }
+        return finalUpcsList;
+    }
+
+    private List<String> getUpcs(){
+        List<String> upcs = new ArrayList<>();
+        BufferedReader reader;
+        try {
+            reader = new BufferedReader(new FileReader("src/main/resources/upcs.txt"));
+            String line = reader.readLine();
+            while (line != null) {
+                upcs.add(line);
+                // read next line
+                line = reader.readLine();
+            }
+            reader.close();
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+        return upcs;
     }
 
 
