@@ -96,7 +96,7 @@ public class BigTableUtil {
             log.info("Trying to connect to " + projectId + ":" + instanceId + ":" + tableId + " bigtable");
             try {
                 client = BigtableDataClient.create(projectId, instanceId);
-                mcc = new MemcachedClient(new InetSocketAddress(discoveryEndpoint, 11211));
+                //mcc = new MemcachedClient(new InetSocketAddress(discoveryEndpoint, 11211));
                 lruCache = new LRUCache(32000);
                 upcs = getUpcs();
                 locations = getLocations();
@@ -436,7 +436,7 @@ public class BigTableUtil {
     }
 
     public Map<String, String> processNcpEligibleUpcsByPrefixPostWithRedisCache(List<String> upcs, String... families) {
-        log.info("Serving Request number {} " , increaseCounter());
+        //log.info("Serving Request number {} " , increaseCounter());
         Map<String, Set<String>> rowKeys = prepareUpcsAndLocs(upcs);
         Map<String, String> rowMap = new HashMap<>();
         Map<String, String> qualifierFamilyMap = new HashMap<>();
@@ -459,7 +459,7 @@ public class BigTableUtil {
     }
 
     public Map<String, Map<String, String>> processNcpEligibleUpcsByPrefixPostWithMemcached(List<String> upcs, String... families) {
-        log.info("Serving Request number {} " , increaseCounter());
+        //log.info("Serving Request number {} " , increaseCounter());
         Map<String, Set<String>> rowKeys = prepareUpcsAndLocs(upcs);
         Map<String, Map<String, String>> rowMap = new HashMap<>();
         Map<String, String> qualifierFamilyMap = new HashMap<>();
